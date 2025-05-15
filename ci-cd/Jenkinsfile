@@ -1,0 +1,116 @@
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+def microServiceName = "ezapprovalg"
+def packageName = "ezApprovalG"
+def imgRegistry  = "10.0.50.10:31110"   // Kaoni Cloud NEXUS
+//def imgRegistry  = "10.0.50.10:30412"   // Kaoni Cloud NEXUS
+def gitops = "gitlab.kaoninfra.com/ezekp365g/gitops/ezapprovalg.git"
+def today = new SimpleDateFormat("yyyyMMdd").format(new Date())
+
+
+podTemplate(
+     containers: [
+        containerTemplate(name: 'jnlp'
+            , image: 'jenkins/inbound-agent:latest'
+            , resourceRequestMemory: '512Mi'
+            , resourceRequestCpu: '500m'
+            , workingDir: '/home/jenkins/agent'
+        )
+        ,containerTemplate(name: 'docker'
+            , image: 'docker:24-dind'
+            , resourceRequestMemory: '2Gi'
+            ,  resourceRequestCpu: '500m'
+            , ttyEnabled: true
+            , command: 'dockerd-entrypoint.sh'
+            , privileged: true  
+            , args: '--insecure-registry=10.0.50.10:31110'
+        )
+        ,containerTemplate(name: 'maven'
+            , image: 'maven:3.8.8-ibmjava-8'
+            , resourceRequestMemory: '256Mi'
+            , resourceRequestCpu: '500m'
+            , ttyEnabled: true
+            , command: 'cat'
+        )
+        ,containerTemplate(name: 'kustomize'
+            , image: 'alpine/git'
+            , resourceRequestMemory: '256Mi'
+            , resourceRequestCpu: '200m'
+            , ttyEnabled: true
+            , command: 'cat')
+    ],
+    volumes: [
+        persistentVolumeClaim(mountPath: '/root', claimName: 'maven-jenkins-pvc'),
+        secretVolume(secretName: 'docker-config', mountPath: '/etc/docker')
+    ]
+) {
+    node(POD_LABEL) {
+        stage("1. Checkout") {
+            checkout scm
+        }
+
+        stage("2. Maven build") {
+            container('maven') {
+                script {
+                        sh "cd /home/jenkins/agent/workspace/${packageName} && mvn clean package -DskipTests=true -DsendCredentialsOverHttp=true"
+                        sh "mkdir ROOT && cd ROOT && jar xvf /home/jenkins/agent/workspace/${packageName}/output/ezFlow.war"
+                        echo "Maven build completed"
+                }
+            }
+        }
+
+
+        stage("3. Docker build") {
+            container('docker') {
+                script {
+                    sh "docker build -t ${microServiceName}:${today}bn${env.BUILD_NUMBER} ."
+                    echo "Docker build completed"
+                }
+            }
+        }
+
+        stage("4. Push Docker Image to Kaoni Cloud Nexus") {
+            container('docker') {
+                script {
+                    withCredentials([[$class: 'UsernamePasswordMultiBinding',
+                        credentialsId: 'nexus-credentials',
+                        usernameVariable: 'USERNAME',
+                        passwordVariable: 'PASSWORD'
+                    ]]) {
+                        sh "echo '${PASSWORD}' | docker login ${imgRegistry} -u ${USERNAME} --password-stdin"
+                        sh "docker tag ${microServiceName}:${today}bn${env.BUILD_NUMBER} ${imgRegistry}/ktg-${microServiceName}:${today}bn${env.BUILD_NUMBER}"
+                        sh "docker push ${imgRegistry}/ktg-${microServiceName}:${today}bn${env.BUILD_NUMBER}"
+                        echo "push to Kaoni Cloud Nexus completed"
+                    }
+                }
+            }
+        }
+
+        stage("5. Update Manifest and Push to GitOps") {
+            container('kustomize') {
+                script {
+                    withCredentials([[$class: 'UsernamePasswordMultiBinding',
+                        credentialsId: 'gitlab-credentials',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_PASSWORD'
+                    ]]) {
+                        sh "apk add --no-cache kustomize"
+                        sh 'git config --global user.email "gitlab_admin_e3e4b4@example.com"'
+                        sh 'git config --global user.name "root"'
+                        sh "git clone http://${GIT_USERNAME}:${GIT_PASSWORD}@${gitops} gitops"
+                        sh "cd gitops"
+                        sh "git config --global --add safe.directory /home/jenkins/agent/workspace/ezApprovalG && \
+                            cd overlays/staging && \
+                            git checkout main && \
+                            kustomize edit set image registry.nexus.com/ktg-${microServiceName}:${today}bn${env.BUILD_NUMBER} && \
+                            git add . && \
+                            git commit -m \"Update ${microServiceName} image to ${today}bn${env.BUILD_NUMBER}\" && \
+                            git push --force http://${GIT_USERNAME}:${GIT_PASSWORD}@${gitops} main"
+                          echo "Update Manifest and push to GitOps completed"
+                    }
+                }
+            }
+       }
+    }
+}
