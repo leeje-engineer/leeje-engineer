@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-data-pv
+spec:
+  capacity:
+    storage: 30Gi
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  hostPath:
+    path: "/gitlab/data"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-logs-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  hostPath:
+    path: "/gitlab/logs"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: gitlab-config-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  hostPath:
+    path: "/gitlab/config"
+

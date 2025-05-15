@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor
+  template:
+    metadata:
+      labels:
+        app: harbor
+    spec:
+      containers:
+      - name: harbor-core
+        image: goharbor/harbor-core:2.7.2
+        ports:
+        - containerPort: 8081  # Changed port
+        volumeMounts:
+        - name: harbor-data
+          mountPath: /var/lib/harbor
+      - name: harbor-jobservice
+        image: goharbor/harbor-jobservice:2.7.2
+        ports:
+        - containerPort: 8081  # Changed port
+        volumeMounts:
+        - name: harbor-data
+          mountPath: /var/lib/harbor
+      - name: harbor-registry
+        image: goharbor/harbor-registry:2.7.2
+        ports:
+        - containerPort: 5001  # Changed port
+        volumeMounts:
+        - name: harbor-data
+          mountPath: /var/lib/registry
+      - name: harbor-db
+        image: goharbor/harbor-db:2.7.2
+        ports:
+        - containerPort: 5433  # Changed port
+        volumeMounts:
+        - name: harbor-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: harbor-data
+        persistentVolumeClaim:
+          claimName: harbor-pvc
+
